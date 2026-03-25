@@ -60,6 +60,36 @@
   gap: 12px;
 }
 
+.segmented {
+  display: flex;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.segBtn {
+  flex: 1 1 0;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.segBtn.active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+
+.segBtn:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+
 .label {
   display: flex;
   flex-direction: column;

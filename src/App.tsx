@@ -1,4 +1,4 @@
-import { Interface } from 'ethers'
+import { AbiCoder, Interface } from 'ethers'
 import { useMemo, useState } from 'react'
 import './App.css'
 
@@ -7,6 +7,8 @@ type ParamRow = {
   type: string
   value: string
 }
+
+type InputMode = 'signature' | 'selector'
 
 type Preset = {
   id: string
@@ -69,8 +71,10 @@ function tryParseValue(type: string, raw: string) {
 }
 
 function App() {
+  const [inputMode, setInputMode] = useState<InputMode>('signature')
   const [presetId, setPresetId] = useState<string>(PRESETS[0]!.id)
   const [signature, setSignature] = useState<string>(PRESETS[0]!.signature)
+  const [selector, setSelector] = useState<string>('')
   const [params, setParams] = useState<ParamRow[]>(
     PRESETS[0]!.paramTypes.map((t) => ({ id: randomId(), type: t, value: '' })),
   )
@@ -78,6 +82,7 @@ function App() {
   const [error, setError] = useState<string>('')
 
   const isCustom = presetId === 'custom'
+  const canEditParams = isCustom || inputMode === 'selector'
 
   const iface = useMemo(() => {
     const sig = signature.trim()
@@ -105,23 +110,19 @@ function App() {
     setError('')
   }
 
+  function normalizeSelectorHex(raw: string) {
+    const s = raw.trim().toLowerCase()
+    if (!s) return ''
+    const with0x = s.startsWith('0x') ? s : `0x${s}`
+    if (!/^0x[0-9a-f]{8}$/.test(with0x)) {
+      throw new Error('Selector must be 4 bytes hex (example: 0xca350aa6)')
+    }
+    return with0x
+  }
+
   function onGenerate() {
     setError('')
     setCalldata('')
-
-    const sig = signature.trim()
-    if (!sig) {
-      setError('Method signature is required (example: transfer(address,uint256)).')
-      return
-    }
-    if (!iface) {
-      setError('Invalid method signature. Example: approve(address,uint256)')
-      return
-    }
-    if (!functionName) {
-      setError('Invalid method name in signature.')
-      return
-    }
 
     try {
       const values = params.map((p, idx) => {
@@ -130,8 +131,34 @@ function App() {
         return tryParseValue(p.type, p.value)
       })
 
-      const data = iface.encodeFunctionData(functionName, values)
-      setCalldata(data)
+      if (inputMode === 'signature') {
+        const sig = signature.trim()
+        if (!sig) {
+          setError('Method signature is required (example: transfer(address,uint256)).')
+          return
+        }
+        if (!iface) {
+          setError('Invalid method signature. Example: approve(address,uint256)')
+          return
+        }
+        if (!functionName) {
+          setError('Invalid method name in signature.')
+          return
+        }
+        const data = iface.encodeFunctionData(functionName, values)
+        setCalldata(data)
+        return
+      }
+
+      const sel = normalizeSelectorHex(selector)
+      if (!sel) {
+        setError('Function selector is required (example: 0xca350aa6).')
+        return
+      }
+
+      const types = params.map((p) => p.type.trim())
+      const encodedArgs = AbiCoder.defaultAbiCoder().encode(types, values)
+      setCalldata(`${sel}${encodedArgs.slice(2)}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -157,6 +184,8 @@ function App() {
               className="select"
               value={presetId}
               onChange={(e) => applyPreset(e.target.value)}
+              disabled={inputMode === 'selector'}
+              title={inputMode === 'selector' ? 'Switch to Signature mode to use presets' : undefined}
             >
               {PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -166,6 +195,37 @@ function App() {
             </select>
           </label>
 
+          <label className="label">
+            Input mode
+            <div className="segmented" role="tablist" aria-label="Input mode">
+              <button
+                type="button"
+                className={`segBtn ${inputMode === 'signature' ? 'active' : ''}`}
+                onClick={() => {
+                  setInputMode('signature')
+                  setCalldata('')
+                  setError('')
+                }}
+              >
+                Signature
+              </button>
+              <button
+                type="button"
+                className={`segBtn ${inputMode === 'selector' ? 'active' : ''}`}
+                onClick={() => {
+                  setInputMode('selector')
+                  setPresetId('custom')
+                  setCalldata('')
+                  setError('')
+                }}
+              >
+                Selector
+              </button>
+            </div>
+          </label>
+        </div>
+
+        {inputMode === 'signature' ? (
           <label className="label">
             Method signature
             <input
@@ -181,7 +241,23 @@ function App() {
               inputMode="text"
             />
           </label>
-        </div>
+        ) : (
+          <label className="label">
+            Function selector (4 bytes)
+            <input
+              className="input mono"
+              value={selector}
+              onChange={(e) => {
+                setSelector(e.target.value)
+                setCalldata('')
+                setError('')
+              }}
+              placeholder="0xca350aa6"
+              spellCheck={false}
+              inputMode="text"
+            />
+          </label>
+        )}
 
         <section className="params">
           <div className="paramsHeader">
@@ -193,8 +269,10 @@ function App() {
                 onClick={() =>
                   setParams((prev) => [...prev, { id: randomId(), type: 'uint256', value: '' }])
                 }
-                disabled={!isCustom}
-                title={!isCustom ? 'Switch to Custom to edit parameter list' : undefined}
+                disabled={!canEditParams}
+                title={
+                  !canEditParams ? 'Switch to Custom (or Selector mode) to edit parameter list' : undefined
+                }
               >
                 Add parameter
               </button>
@@ -216,7 +294,7 @@ function App() {
                       prev.map((x) => (x.id === p.id ? { ...x, type: e.target.value } : x)),
                     )
                   }
-                  disabled={!isCustom}
+                  disabled={!canEditParams}
                   placeholder="address | uint256 | bool | bytes32 | uint256[]"
                   spellCheck={false}
                 />
@@ -235,8 +313,10 @@ function App() {
                   className="btn danger"
                   type="button"
                   onClick={() => setParams((prev) => prev.filter((x) => x.id !== p.id))}
-                  disabled={!isCustom || params.length <= 1}
-                  title={!isCustom ? 'Switch to Custom to edit parameter list' : 'Remove parameter'}
+                  disabled={!canEditParams || params.length <= 1}
+                  title={
+                    !canEditParams ? 'Switch to Custom (or Selector mode) to edit parameter list' : 'Remove parameter'
+                  }
                 >
                   Remove
                 </button>
@@ -272,7 +352,9 @@ function App() {
         <section className="output">
           <div className="outputHeader">
             <div className="paramsTitle">Calldata</div>
-            <div className="chip">{functionName ? `${functionName}()` : '—'}</div>
+            <div className="chip">
+              {inputMode === 'signature' ? (functionName ? `${functionName}()` : '—') : 'selector'}
+            </div>
           </div>
           <textarea
             className="textarea mono"
